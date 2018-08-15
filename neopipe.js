@@ -79,7 +79,7 @@ function processInstruction(session, instructionLine) {
 
   if (!leftId && !program.keepBlank) {
     console.warn(`* Skipping expression with empty id: ${instructionLine}`.yellow);
-    return;
+    return null;
   }
   else if (leftId) {
     // We've got an id, so bump all other properties to set props
@@ -110,7 +110,7 @@ function processInstruction(session, instructionLine) {
 
     if (!rightId && !program.keepBlank) {
       console.warn(`* Skipping expression with empty id: ${instructionLine}`.yellow);
-      return;
+      return null;
     }
     else if (rightId) {
       // We've got an id, so bump all other properties to set props
@@ -140,7 +140,7 @@ function processInstruction(session, instructionLine) {
       RETURN ab
     `;
     if (program.verbose > 1) console.error(indentLines(trimLines(cypher), 2).green);
-    if (!program.testonly) neoPromises.push(session.run(cypher));
+    if (!program.testonly) return session.run(cypher);
   }
   else if (instruction.type == 'insert') {
     let cypher = `
@@ -148,8 +148,9 @@ function processInstruction(session, instructionLine) {
       RETURN a
     `;
     if (program.verbose > 1) console.error(indentLines(trimLines(cypher), 2));
-    if (!program.testonly) neoPromises.push(session.run(cypher));
+    if (!program.testonly) return session.run(cypher);
   }
+  return null;
 }
 
 program
@@ -220,8 +221,12 @@ program
   })
   .parse(process.argv);
 
-const instructionTemplate = program.args.join(' ');
-const neoPromises = [];
+const instructionTemplate = program.args.join(' ').trim();
+if (instructionTemplate == '') {
+  program.help();
+  process.exit(1);
+}
+
 const limit = promiseLimit(program.jobs);
 
 const timeStarted = process.hrtime();
@@ -231,8 +236,13 @@ if (program.testonly) {
 if (process.stdin.isTTY) {
   // Process single instruction from the command line
   const [driver, session] = establishConnection();
-  processInstruction(session, instructionTemplate);
-  Promise.all(neoPromises).then(() => {
+  let inserted = processInstruction(session, instructionTemplate);
+  if (!inserted) {
+    session.close();
+    driver.close();
+    process.exit();
+  }
+  inserted.then(() => {
     session.close();
     driver.close();
     const timeDiff = process.hrtime(timeStarted);
@@ -322,14 +332,15 @@ else {
         if (program.testonly) console.error(`* Building expressions.`.cyan);
         else console.error(`* Building expressions and inserting to Neo4j.`.cyan);
       }
-      for (let instruction of pendingInstructions) processInstruction(session, instruction);
+      let neoPromises = pendingInstructions.map(instruction => processInstruction(session, instruction));
+      neoPromises = neoPromises.filter(i => i);
       Promise.all(neoPromises).then(() => {
         session.close();
         driver.close();
         const timeDiff = process.hrtime(timeStarted);
         const timeElapsed = (timeDiff[0] * NS_PER_SEC + timeDiff[1]) / NS_PER_SEC;
-        if (program.testonly) console.error(`* ${pendingInstructions.length} expressions simulated (${timeElapsed.toFixed(2)} sec).`.cyan);
-        else console.error(`* ${pendingInstructions.length} expressions inserted into Neo4j (${timeElapsed.toFixed(2)} sec).`.cyan);
+        if (program.testonly) console.error(`* ${neoPromises.length} expressions simulated (${timeElapsed.toFixed(2)} sec).`.cyan);
+        else console.error(`* ${neoPromises.length} expressions inserted into Neo4j (${timeElapsed.toFixed(2)} sec).`.cyan);
       });
     });
   });
