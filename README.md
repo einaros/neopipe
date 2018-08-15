@@ -23,7 +23,9 @@ docker run \
 
 .. at which point a web interface should be available at http://localhost:7474/. Also any data for that specific Neo4j instance will be put in the current folder's newly created subfolder `neo4j/`. If you're coming back to a pre-existing forensic project directory, you'll find that you can continue where you left off. Neat and contained.
 
-As for how to use `neopipe` itself: Here's the output from `neopipe -h`:
+See also this thread for examples I slapped together while feverishly developing the tool: https://twitter.com/einaros/status/1029385058078076928
+
+As for how to use `neopipe` yourseelf: Here's the output from `neopipe -h`:
 
 ```
 Usage: neopipe [options]
