@@ -6,6 +6,12 @@ A simple(ish) tool to pipe stuff into Neo4j.
 
 `npm install -g neopipe`
 
+### Caution (albeit a tiny one) ###
+
+I should add this early: As of now (v0.1.3ish) input piped from stdin isn't rinced for any script instructions. So if you happen to be piping from an untrusted source, and they for whatever reason have targetted this obscure and entirely unknown tool, they can execute code!!!11
+
+I'll fix this shortly, before anyone actually uses it, let alone abuses it.
+
 ## Usage ##
 
 First you need Neo4j running locally with no password. Yes, that should be fixed in the future. Yes, it should be configurable from the command line.
