@@ -97,20 +97,32 @@ another command (md5):
 $ find node_modules -type f | neopipe 'FILE:"{1}" (size:"{!stat -f %z {1}}") HAS HASH:{!md5 -q {1}}'
 ```
 
-Simulate adding an object 'a' with id='az', which is the result of splitting the third entry
+Simulate adding an entity 'a' with id='az', which is the result of splitting the third entry
 three times with different delimiters. Show verbose output (repeat 'v' multiple times for more verbose):
 
 ```
 $ echo 'foo bar "b-az,bax"' | neopipe -vt 'a:"{3/,:1/\-:2}"'
 ```
 
-Add an object 'a', but try to interpolate id from a missing field, so fall back to a default value 'ugh':
+As above, but make the entity id a sha1 hash of the interpolated value:
+
+```
+$ echo 'foo bar "b-az,bax"' | neopipe -vt 'a:"{#3/,:1/\\-:2}"'
+```
+
+As above, but make the entity id a sha1 hash of the uppercase'd interpolated value:
+
+```
+$ echo 'foo bar "b-az,bax"' | neopipe -vt 'a:"{##3/,:1/\\-:2}"'
+```
+
+Add an entity 'a', but try to interpolate id from a missing field, so fall back to a default value 'ugh':
 
 ```
 $ echo 'foo bar "b-az,bax"' | neopipe 'a:"{4?ugh}"'
 ```
 
-Add an object 'a', but try to interpolate id from a missing field, fall back to the result of 'uptime':
+Add an entity 'a', but try to interpolate id from a missing field, fall back to the result of 'uptime':
 
 ```
 $ echo 'foo bar "b-az,bax"' | neopipe 'a:"{4?{!uptime}}"'
