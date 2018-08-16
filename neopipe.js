@@ -5,6 +5,7 @@
  * License: ISC
  * Web: https://github.com/einaros/neopipe
  */
+
 const program = require('commander');
 const colors = require('colors');
 const parse = require('csv-parse/lib/sync');
@@ -63,6 +64,7 @@ function grabUntilEndBrace(s, start) {
 }
 
 function processInstruction(session, instructionLine) {
+  if (instructionLine == null) return null;
   if (program.verbose > 0) {
     console.error(`! ${instructionLine}`.magenta);
   }
@@ -153,6 +155,64 @@ function processInstruction(session, instructionLine) {
   return null;
 }
 
+async function processStdinLine(line) {
+  const interpolateExp = /(?<!\\)\{(?=[^!]).*/g;
+  const executeExp = /(?<!\\)\{!.*/g;
+  const escapeExp = /\\([-{}])/g;
+  return new Promise(async (accept, reject) => {
+    if (program.pipe && !program.pipeInterpolated) console.log(line);
+    if (program.verbose > 0) {
+      console.error(`> ${line}`.yellow);
+    }
+    line = parse(line, { delimiter: program.separator, quote: program.quote })[0];
+    // interpolate stdin lines
+    let lineInstruction = instructionTemplate;
+    while (interpolateExp.test(lineInstruction)) {
+      lineInstruction = lineInstruction.replace(interpolateExp, (m, index, original) => { 
+        let [start, end] = grabUntilEndBrace(original, index);
+        let expression = original.slice(start, end).trim();
+        if (program.verbose > 2) console.error('Interpolate:', expression);
+        const interpolateParser = new nearley.Parser(compiledSubgrammar);
+        interpolateParser.feed(expression);
+        let res = interpolateParser.results[0];
+        if (program.verbose > 2) console.error('Interpolate result:', JSON.stringify(res));
+        let value = line.slice(res.field.start-1, res.field.end == -1 ? line.length : res.field.end).join(program.separator);
+        if (value.length == 0) return res.optional + original.slice(end+1);
+        for (let sub of res.field.sub || []) {
+          let split = parse(value, { delimiter: sub.subdelim })[0];
+          let subStart = sub.start-1;
+          let subEnd = sub.end == -1 ? split.length : sub.end;
+          if (subStart >= split.length) return res.optional + original.slice(end + 1);
+          value = split.slice(subStart, subEnd).join(sub.subdelim);
+        }
+        if (res.upcase) value = value.toUpperCase();
+        if (res.hashed) value = sha1(value);
+        return  value + original.slice(end+1);
+      });
+    }
+    // execute script instructions
+    while (executeExp.test(lineInstruction)) {
+      lineInstruction = await stringReplaceAsync(lineInstruction, executeExp, async (m, index, original) => { 
+        let [start, end] = grabUntilEndBrace(original, index);
+        let shellScript = unesc(original.slice(start+1, end).trim());
+        if (program.verbose > 2) console.error('Inline script:', shellScript);
+        const { stdout, stderr } = await exec(shellScript); 
+        if (program.verbose > 2) {
+          console.error('Stdout:', stdout.toString().trim());
+          console.error('Stderr:', stderr.toString().trim());
+        }
+        const stdoutLine = stdout.toString().trim().replace(/\n/g, ' ');
+        return  stdoutLine + original.slice(end+1);
+      });
+    }
+    // unescape
+    lineInstruction = lineInstruction.replace(escapeExp, '$1');
+    // process the fully interpolated instruction
+    if (program.pipeInterpolated) console.log(lineInstruction);
+    accept(lineInstruction);
+  });
+}
+
 program
   .version(require('./package.json').version)
   .description(require('./package.json').description)
@@ -164,61 +224,7 @@ program
   .option('-i, --pipe-interpolated', 'Pipe interpolated input to output.')
   .option('-t, --testonly', 'Simulate insertion.')
   .option('-v, --verbose', 'Increase verbosity.', (v, total) => total + 1, 0)
-  .on('--help', function(){
-    console.log(`
-  Author: Einar Otto Stangvik (twitter.com/einaros)
-
-  License: ISC
-
-  Examples:
-
-    Adding entities, properties and connections:
-    ============================================
-
-      Add entity 'Dog' with id='Fido', set age=10: 
-
-        $ neopipe 'Dog:Fido (age:10)'
-
-      Add entity 'Dog' with id='Fido Boy', set age='very old', add connection 'OWNED_BY' to Man with id='Roy': 
-
-        $ neopipe 'Dog:"Fido Boy" (age:"very old") OWNED_BY Man:Roy'
-
-      Add property 'Likes dog'='yes' to existing entity Man with id='Roy': 
-
-        $ neopipe 'Man:Roy ("Likes dog":yes)'
-    
-    Process lines from standard input:
-    ============================================
-
-      Add Thing with id='foo' connected via 'is_not_a' to Thing with id 'baz':
-
-        $ echo foo bar baz | neopipe 'Thing:{1} is_not_a Thing:{3}'
-
-      Add the same things as above, and pass all stdin along to the next piped command:
-
-        $ echo foo bar baz | neopipe -p 'Thing:{1} is_not_a Thing:{3}' | something_else.sh
-
-      Find files in a folder hierarchy, add FILE entities with the filenames as id,
-      set a property 'size' on the FILE with the result of a shell executed command (stat) with
-      the filename interpolated ({1}), add a connection to a HASH with id set to the result of
-      another command (md5):
-
-        $ find node_modules -type f | neopipe 'FILE:"{1}" (size:"{!stat -f %z {1}}") HAS HASH:{!md5 -q {1}}'
-
-      Simulate adding an object 'a' with id='az', which is the result of splitting the third entry
-      three times with different delimiters. Show verbose output (repeat 'v' multiple times for more verbose):
-
-        $ echo 'foo bar "b-az,bax"' | neopipe -vt 'a:"{3/,:1/\\-:2}"'
-
-      Add an object 'a', but try to interpolate id from a missing field, so fall back to a default value 'ugh':
-
-        $ echo 'foo bar "b-az,bax"' | neopipe 'a:"{4?ugh}"'
-
-      Add an object 'a', but try to interpolate id from a missing field, fall back to the result of 'uptime':
-
-        $ echo 'foo bar "b-az,bax"' | neopipe 'a:"{4?{!uptime}}"'
-    `);
-  })
+  .on('--help', function(){ console.log(require('./help.js')); })
   .parse(process.argv);
 
 const instructionTemplate = program.args.join(' ').trim();
@@ -227,12 +233,11 @@ if (instructionTemplate == '') {
   process.exit(1);
 }
 
+const timeStarted = process.hrtime();
+if (program.testonly) console.error('* Simulation starting - will not commit to Neo4j'.cyan);
+
 const limit = promiseLimit(program.jobs);
 
-const timeStarted = process.hrtime();
-if (program.testonly) {
-  console.error('* Simulation starting - will not commit to Neo4j'.cyan);
-}
 if (process.stdin.isTTY) {
   // Process single instruction from the command line
   const [driver, session] = establishConnection();
@@ -260,80 +265,17 @@ else {
     output: process.stdout,
     terminal: false
   });
-
-  async function processStdinLine(line) {
-    const interpolateExp = /(?<!\\)\{(?=[^!]).*/g;
-    const executeExp = /(?<!\\)\{!.*/g;
-    const escapeExp = /\\([-{}])/g;
-    return new Promise(async (accept, reject) => {
-      if (program.pipe && !program.pipeInterpolated) console.log(line);
-      if (program.verbose > 0) {
-        console.error(`> ${line}`.yellow);
-      }
-      line = parse(line, { delimiter: program.separator, quote: program.quote })[0];
-      // interpolate stdin lines
-      let lineInstruction = instructionTemplate;
-      while (interpolateExp.test(lineInstruction)) {
-        lineInstruction = lineInstruction.replace(interpolateExp, (m, index, original) => { 
-          let [start, end] = grabUntilEndBrace(original, index);
-          let expression = original.slice(start, end).trim();
-          if (program.verbose > 2) console.error('Interpolate:', expression);
-          const interpolateParser = new nearley.Parser(compiledSubgrammar);
-          interpolateParser.feed(expression);
-          let res = interpolateParser.results[0];
-          if (program.verbose > 2) console.error('Interpolate result:', JSON.stringify(res));
-          let value = line.slice(res.field.start-1, res.field.end == -1 ? line.length : res.field.end).join(program.separator);
-          if (value.length == 0) return res.optional + original.slice(end+1);
-          for (let sub of res.field.sub || []) {
-            let split = parse(value, { delimiter: sub.subdelim })[0];
-            let subStart = sub.start-1;
-            let subEnd = sub.end == -1 ? split.length : sub.end;
-            if (subStart >= split.length) return res.optional + original.slice(end + 1);
-            value = split.slice(subStart, subEnd).join(sub.subdelim);
-          }
-          if (res.upcase) value = value.toUpperCase();
-          if (res.hashed) value = sha1(value);
-          return  value + original.slice(end+1);
-        });
-      }
-      // execute script instructions
-      while (executeExp.test(lineInstruction)) {
-        lineInstruction = await stringReplaceAsync(lineInstruction, executeExp, async (m, index, original) => { 
-          let [start, end] = grabUntilEndBrace(original, index);
-          let shellScript = unesc(original.slice(start+1, end).trim());
-          if (program.verbose > 2) console.error('Inline script:', shellScript);
-          const { stdout, stderr } = await exec(shellScript); 
-          if (program.verbose > 2) {
-            console.error('Stdout:', stdout.toString().trim());
-            console.error('Stderr:', stderr.toString().trim());
-          }
-          const stdoutLine = stdout.toString().trim().replace(/\n/g, ' ');
-          return  stdoutLine + original.slice(end+1);
-        });
-      }
-      // unescape
-      lineInstruction = lineInstruction.replace(escapeExp, '$1');
-      // process the fully interpolated instruction
-      if (program.pipeInterpolated) console.log(lineInstruction);
-      accept(lineInstruction);
-    });
-  }
-  
   if (program.verbose > 0) console.error(`* Collecting input from stdin.`.cyan);
   let pendingInput = [];
+  const [driver, session] = establishConnection();
   rl.on('line', async (line) => {
-    pendingInput.push(limit(() => processStdinLine(line)));
+    pendingInput.push(
+            limit(() => processStdinLine(line))
+      .then(limit(v => processInstruction(session, v))));
   });
   rl.on('close', () => {
-    Promise.all(pendingInput).then((pendingInstructions) => {
-      const [driver, session] = establishConnection();
-      // send all prebuilt linstructions to neo
-      if (program.verbose > 0) {
-        if (program.testonly) console.error(`* Building expressions.`.cyan);
-        else console.error(`* Building expressions and inserting to Neo4j.`.cyan);
-      }
-      let neoPromises = pendingInstructions.map(instruction => processInstruction(session, instruction));
-      neoPromises = neoPromises.filter(i => i);
+    Promise.all(pendingInput).then((results) => {
+      let neoPromises = results.filter(i => i); // only awit for instructions that resulted in neo inserts
       Promise.all(neoPromises).then(() => {
         session.close();
         driver.close();
