@@ -30,7 +30,7 @@ const timeStarted = process.hrtime();
 program
   .version(require('./package.json').version)
   .description(require('./package.json').description)
-  .option('-b, --keep-blank', 'Keep expressions with blank ids')
+  .option('-b, --keep-blank', 'Keep expressions with blank ids.')
   .option('-s, --separator [separator]', 'Custom field separator for stdin interpolation.', ' ')
   .option('-q, --quote [quote]', 'Custom quote char for stdin interpolation.', '"')
   .option('-p, --pipe', 'Pipe input to output.')
@@ -38,9 +38,10 @@ program
   .option('-i, --pipe-interpolated', 'Pipe interpolated input to output.')
   .option('-t, --testonly', 'Simulate insertion.')
   .option('-v, --verbose', 'Increase verbosity.', (v, total) => total + 1, 0)
-  .option('--neohost [host]', 'Neo4j hostname', 'localhost')
-  .option('--neouser [user]', 'Neo4j username', null)
-  .option('--neopasswd [passwd]', 'Neo4j password', null)
+  .option('--neohost [host]', 'Neo4j hostname.', 'localhost')
+  .option('--neouser [user]', 'Neo4j username.', null)
+  .option('--neopasswd [passwd]', 'Neo4j password.', null)
+  .option('--stream', 'Stream insertion to Neo4j. Disable transaction logic, that is.')
   .on('--help', function(){ console.log(require('./help.js')); })
   .parse(process.argv);
 
@@ -342,7 +343,7 @@ if (!process.stdin.isTTY) {
   rl.on('line', async (line) => {
     pendingNeoPromises.push(
       limit(() => processStdinLine(line))
-        .then(v => processInstruction(tx, v))
+        .then(v => processInstruction(program.stream ? session : tx, v))
         .catch(e => e)
     );
   });

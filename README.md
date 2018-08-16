@@ -35,14 +35,18 @@ Pipe stuff to Neo4j
 Options:
 
 	-V, --version                output the version number
-	-b, --keep-blank             Keep expressions with blank ids
+	-b, --keep-blank             Keep expressions with blank ids.
 	-s, --separator [separator]  Custom field separator for stdin interpolation. (default:  )
 	-q, --quote [quote]          Custom quote char for stdin interpolation. (default: ")
 	-p, --pipe                   Pipe input to output.
-	-j, --jobs [jobs]            Limit number of concurrent jobs. (default: <NUMBER_OF_CPU_CORES>)
+	-j, --jobs [jobs]            Limit number of concurrent jobs. (default: 8)
 	-i, --pipe-interpolated      Pipe interpolated input to output.
 	-t, --testonly               Simulate insertion.
 	-v, --verbose                Increase verbosity.
+	--neohost [host]             Neo4j hostname. (default: localhost)
+	--neouser [user]             Neo4j username. (default: null)
+	--neopasswd [passwd]         Neo4j password. (default: null)
+	--stream                     Stream insertion to Neo4j. Disable transaction logic, that is.
 	-h, --help                   output usage information
 ```
 
