@@ -14,7 +14,9 @@ const lexer = moo.compile({
   escape: /\\/,
   colon: /:/,
   questionmark: /\?/,
-  any: /./
+  lbrace: /{/,
+  rbrace: /}/,
+  any: /./,
 });
 var grammar = {
     Lexer: lexer,
@@ -38,6 +40,8 @@ var grammar = {
     {"name": "splitexpression$subexpression$1", "symbols": [(lexer.has("escape") ? {type: "escape"} : escape), (lexer.has("colon") ? {type: "colon"} : colon)]},
     {"name": "splitexpression$subexpression$1", "symbols": [(lexer.has("escape") ? {type: "escape"} : escape), (lexer.has("split") ? {type: "split"} : split)]},
     {"name": "splitexpression$subexpression$1", "symbols": [(lexer.has("escape") ? {type: "escape"} : escape), (lexer.has("range") ? {type: "range"} : range)]},
+    {"name": "splitexpression$subexpression$1", "symbols": [(lexer.has("escape") ? {type: "escape"} : escape), (lexer.has("lbrace") ? {type: "lbrace"} : lbrace)]},
+    {"name": "splitexpression$subexpression$1", "symbols": [(lexer.has("escape") ? {type: "escape"} : escape), (lexer.has("rbrace") ? {type: "rbrace"} : rbrace)]},
     {"name": "splitexpression$subexpression$1", "symbols": [(lexer.has("space") ? {type: "space"} : space)]},
     {"name": "splitexpression$subexpression$1", "symbols": [(lexer.has("number") ? {type: "number"} : number)]},
     {"name": "splitexpression$subexpression$1", "symbols": [(lexer.has("hash") ? {type: "hash"} : hash)]},

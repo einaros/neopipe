@@ -65,7 +65,17 @@ function establishConnection() {
   return [driver, session, tx];
 }
 
-function unesc(s) {
+function unescapeSlashes(s) {
+  if (!s) return s;
+  return s.replace(/\\\\/g, '\\');
+}
+
+function escapeSlashes(s) {
+  if (!s) return s;
+  return s.replace(/\\/g, '\\\\');
+}
+
+function unescScript(s) {
   return s.replace(/\\(.)/g, '$1');
 }
 
@@ -104,16 +114,15 @@ function processInstruction(session, instructionLine) {
   }
   
   const parser = new nearley.Parser(compiledGrammar);
-  parser.feed(instructionLine);
+  parser.feed(escapeSlashes(instructionLine));
   let instruction = parser.results[0];
-
   if (!instruction) {
     throw new Error(`Expression parsing failed: ${instructionLine}`);
   }
 
-  let leftName = instruction.left.name;
-  let leftMergeOn = instruction.left.mergeOn || 'id';
-  let leftId = instruction.left.id || null;
+  let leftName = escapeSlashes(instruction.left.name);
+  let leftMergeOn = escapeSlashes(instruction.left.mergeOn || 'id');
+  let leftId = escapeSlashes(instruction.left.id || null);
   let leftMergeProperties = [];
   let leftSetProperties = '';
 
@@ -127,7 +136,7 @@ function processInstruction(session, instructionLine) {
     leftMergeProperties = `{ \`${leftMergeOn}\`: "${leftId}" }`;
     if (instruction.left.properties) {
       for (let tuple of Object.entries(instruction.left.properties)) {
-        leftSetProperties.push(`SET a.\`${tuple[0]}\` = "${tuple[1]}"`);
+        leftSetProperties.push(`SET a.\`${escapeSlashes(tuple[0])}\` = "${escapeSlashes(tuple[1])}"`);
       }
       leftSetProperties = '\n' + leftSetProperties.join('\n');
     }
@@ -135,16 +144,16 @@ function processInstruction(session, instructionLine) {
   else if (instruction.left.properties) {
     // No id, handle the full property set as unique
     for (let tuple of Object.entries(instruction.left.properties)) {
-      leftMergeProperties.push(`\`${tuple[0]}\`: "${tuple[1]}"`);
+      leftMergeProperties.push(`\`${escapeSlashes(tuple[0])}\`: "${escapeSlashes(tuple[1])}"`);
     }
     leftMergeProperties = leftMergeProperties.join(',');
     if (leftMergeProperties.length > 0) leftMergeProperties = `{ ${leftMergeProperties} }`;
   }
 
   if (instruction.type == 'connect') {
-    let rightName = instruction.right.name;
-    let rightMergeOn = instruction.right.mergeOn || 'id';
-    let rightId = instruction.right.id || null;
+    let rightName = escapeSlashes(instruction.right.name);
+    let rightMergeOn = escapeSlashes(instruction.right.mergeOn || 'id');
+    let rightId = escapeSlashes(instruction.right.id || null);
     let rightMergeProperties = [];
     let rightSetProperties = '';
 
@@ -158,7 +167,7 @@ function processInstruction(session, instructionLine) {
       rightMergeProperties = `{ \`${rightMergeOn}\`: "${rightId}" }`;
       if (instruction.right.properties) {
         for (let tuple of Object.entries(instruction.right.properties)) {
-          rightSetProperties.push(`SET b.\`${tuple[0]}\` = "${tuple[1]}"`);
+          rightSetProperties.push(`SET b.\`${escapeSlashes(tuple[0])}\` = "${escapeSlashes(tuple[1])}"`);
         }
         rightSetProperties = '\n' + rightSetProperties.join('\n');
       }
@@ -166,7 +175,7 @@ function processInstruction(session, instructionLine) {
     else if (instruction.right.properties) {
       // No id, handle the full property set as unique
       for (let tuple of Object.entries(instruction.right.properties)) {
-        rightMergeProperties.push(`\`${tuple[0]}\`: "${tuple[1]}"`);
+        rightMergeProperties.push(`\`${escapeSlashes(tuple[0])}\`: "${escapeSlashes(tuple[1])}"`);
       }
       rightMergeProperties = rightMergeProperties.join(',');
       if (rightMergeProperties.length > 0) rightMergeProperties = `{ ${rightMergeProperties} }`;
@@ -194,61 +203,98 @@ function processInstruction(session, instructionLine) {
 }
 
 async function processStdinLine(line) {
+  if (program.pipe && !program.pipeInterpolated) console.log(line);
+  if (program.verbose > 0) {
+    console.error(`> ${line}`.white);
+  }
+  // parse input as csvish
+  line = parse(line, { delimiter: program.separator, quote: program.quote })[0];
+  let lineInstruction = instructionTemplate;
+  // output taint, to disable interpolation / execution of stdin stuff
+  let taintArray = new Array(lineInstruction.length).fill(0);
+  // interpolate stdin lines
   const interpolateExp = /(?<!\\)\{(?=[^!]).*/g;
+  while (interpolateExp.test(lineInstruction)) {
+    lineInstruction = lineInstruction.replace(interpolateExp, (m, index, original) => { 
+      let [start, end] = grabUntilEndBrace(original, index);
+      let expression = original.slice(start, end).trim();
+      if (taintArray[index] > 0) {
+        if (program.verbose > 3) console.error('Tainted interpolate:', expression);
+        taintArray.splice(index, 0, 2); // add a single tainted escape char
+        return '\\' + original.slice(index)
+      }
+      if (program.verbose > 2) console.error('Interpolate:', expression);
+      const interpolateParser = new nearley.Parser(compiledSubgrammar);
+      interpolateParser.feed(expression);
+      let res = interpolateParser.results[0];
+      if (!res) {
+        throw new Error(`Substitution expression parsing failed: ${expression}`);
+      }
+      if (program.verbose > 2) console.error('Interpolate result:', JSON.stringify(res));
+      let value = line.slice(res.field.start-1, res.field.end == -1 ? line.length : res.field.end).join(program.separator);
+      if (value.length == 0) return res.optional + original.slice(end+1);
+      for (let sub of res.field.sub || []) {
+        let split = parse(value, { delimiter: sub.subdelim })[0];
+        let subStart = sub.start-1;
+        let subEnd = sub.end == -1 ? split.length : sub.end;
+        if (subStart >= split.length) {
+          taintArray.splice(index, end + 1 - index, ...new Array(res.optional.length).fill(1));
+          return res.optional + original.slice(end + 1);
+        }
+        value = split.slice(subStart, subEnd).join(sub.subdelim);
+      }
+      if (res.upcase) value = value.toUpperCase();
+      if (res.hashed) value = sha1(value);
+      taintArray.splice(index, end + 1 - index, ...new Array(value.length).fill(1));
+      return value + original.slice(end+1);
+    });
+    if (program.verbose > 3) {
+      console.log('Taint status:', lineInstruction.split('').map((c, i) => {
+        if (taintArray[i] == 0) return c.green;
+        if (taintArray[i] == 1) return c.red;
+        if (taintArray[i] == 2) return c.yellow;
+      }).join(''));
+    }
+  }
+  // execute script instructions
   const executeExp = /(?<!\\)\{!.*/g;
-  const escapeExp = /\\([-{}])/g;
-  return new Promise(async (accept, reject) => {
-    if (program.pipe && !program.pipeInterpolated) console.log(line);
-    if (program.verbose > 0) {
-      console.error(`> ${line}`.white);
+  let offset = 0;
+  while (executeExp.test(lineInstruction)) {
+    let nextOffset = 0;
+    let substituted = await stringReplaceAsync(lineInstruction.slice(offset), executeExp, async (m, index, original) => { 
+      nextOffset = offset + index;
+      let [start, end] = grabUntilEndBrace(original, index);
+      let shellScript = unescScript(original.slice(start+1, end).trim());
+      if (taintArray[offset + index] > 0) {
+        if (program.verbose > 3) console.error('Tainted inline script blocked:', shellScript);
+        taintArray.splice(offset + index, 0, 2); // add a single tainted escape char
+        return '\\' + original.slice(index)
+      }
+      if (program.verbose > 2) console.error('Inline script:', shellScript);
+      const { stdout, stderr } = await exec(shellScript); 
+      if (program.verbose > 2) {
+        console.error('Stdout:', stdout.toString().trim());
+        console.error('Stderr:', stderr.toString().trim());
+      }
+      const stdoutLine = stdout.toString().trim().replace(/\n/g, ' ');
+      taintArray.splice(offset + index, end + 1 - (offset + index), ...new Array(stdoutLine.length).fill(1)); // adjust taint
+      return stdoutLine + original.slice(end+1);
+    });
+    lineInstruction = lineInstruction.slice(0, offset) + substituted;
+    if (program.verbose > 3) {
+      console.log('Taint status:', lineInstruction.split('').map((c, i) => {
+        if (taintArray[i] == 0) return c.green;
+        if (taintArray[i] == 1) return c.red;
+        if (taintArray[i] == 2) return c.yellow;
+      }).join(''));
     }
-    line = parse(line, { delimiter: program.separator, quote: program.quote })[0];
-    // interpolate stdin lines
-    let lineInstruction = instructionTemplate;
-    while (interpolateExp.test(lineInstruction)) {
-      lineInstruction = lineInstruction.replace(interpolateExp, (m, index, original) => { 
-        let [start, end] = grabUntilEndBrace(original, index);
-        let expression = original.slice(start, end).trim();
-        if (program.verbose > 2) console.error('Interpolate:', expression);
-        const interpolateParser = new nearley.Parser(compiledSubgrammar);
-        interpolateParser.feed(expression);
-        let res = interpolateParser.results[0];
-        if (program.verbose > 2) console.error('Interpolate result:', JSON.stringify(res));
-        let value = line.slice(res.field.start-1, res.field.end == -1 ? line.length : res.field.end).join(program.separator);
-        if (value.length == 0) return res.optional + original.slice(end+1);
-        for (let sub of res.field.sub || []) {
-          let split = parse(value, { delimiter: sub.subdelim })[0];
-          let subStart = sub.start-1;
-          let subEnd = sub.end == -1 ? split.length : sub.end;
-          if (subStart >= split.length) return res.optional + original.slice(end + 1);
-          value = split.slice(subStart, subEnd).join(sub.subdelim);
-        }
-        if (res.upcase) value = value.toUpperCase();
-        if (res.hashed) value = sha1(value);
-        return  value + original.slice(end+1);
-      });
-    }
-    // execute script instructions
-    while (executeExp.test(lineInstruction)) {
-      lineInstruction = await stringReplaceAsync(lineInstruction, executeExp, async (m, index, original) => { 
-        let [start, end] = grabUntilEndBrace(original, index);
-        let shellScript = unesc(original.slice(start+1, end).trim());
-        if (program.verbose > 2) console.error('Inline script:', shellScript);
-        const { stdout, stderr } = await exec(shellScript); 
-        if (program.verbose > 2) {
-          console.error('Stdout:', stdout.toString().trim());
-          console.error('Stderr:', stderr.toString().trim());
-        }
-        const stdoutLine = stdout.toString().trim().replace(/\n/g, ' ');
-        return  stdoutLine + original.slice(end+1);
-      });
-    }
-    // unescape
-    lineInstruction = lineInstruction.replace(escapeExp, '$1');
-    // process the fully interpolated instruction
-    if (program.pipeInterpolated) console.log(lineInstruction);
-    accept(lineInstruction);
-  });
+    offset = nextOffset;
+  }
+  // remove chars added due to taint protection
+  lineInstruction = lineInstruction.split('').filter((c, i) => taintArray[i] < 2).join('');
+  // process the fully interpolated instruction
+  if (program.pipeInterpolated) console.log(lineInstruction);
+  return lineInstruction;
 }
 
 
@@ -271,8 +317,8 @@ function processPendingInserts(pendingNeoPromises) {
         });
     })
     .catch((e) => {
-      console.log(`* Error(s) during Neo4j operation: ${e.message || e.error}`.red)
-      console.log(`* In the case of dubious errors, check that the database is running and that connection details are correct.`.yellow)
+      console.log(`* Error(s): ${e.stack || e.error}`.red)
+      console.log(`* In the case of dubious 'transaction' errors, check that the database is running and that connection details are correct.`.yellow)
       exitCode = 1;
     })
     .finally(() => {

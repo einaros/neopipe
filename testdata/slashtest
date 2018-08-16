@@ -1,0 +1,12 @@
+cat\1man
+cat\\1man
+cat\\\1man
+cat{1}man
+cat{\1}man
+cat{\\1}man
+cat\{1}man
+cat\\{1}man
+cat\\\{1}man
+cat{!uptime}man
+cat\{!uptime}man
+cat\\{!uptime}man

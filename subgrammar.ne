@@ -10,7 +10,9 @@ const lexer = moo.compile({
   escape: /\\/,
   colon: /:/,
   questionmark: /\?/,
-  any: /./
+  lbrace: /{/,
+  rbrace: /}/,
+  any: /./,
 });
 %}
 @lexer lexer
@@ -35,5 +37,5 @@ fieldnumber ->
   | %number %range              {% ([a,b]) => ({start: parseInt(a), end: -1}) %}
 
 splitexpression ->
-  %split (%escape %escape | %escape %colon | %escape %split | %escape %range | %space | %number | %hash | %letter | %any) %colon fieldnumber
+  %split (%escape %escape | %escape %colon | %escape %split | %escape %range | %escape %lbrace | %escape %rbrace | %space | %number | %hash | %letter | %any) %colon fieldnumber
                                 {% ([a,b,c,d]) => ({subdelim: b[b.length-1].toString(), ...d}) %}
