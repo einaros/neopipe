@@ -43,10 +43,12 @@ Options:
 	-i, --pipe-interpolated      Pipe interpolated input to output.
 	-t, --testonly               Simulate insertion.
 	-v, --verbose                Increase verbosity.
+	-e, --end-query [query]      Raw CYPHER query to run after the sequence has finished. (default: )
 	--neohost [host]             Neo4j hostname. (default: localhost)
 	--neouser [user]             Neo4j username. (default: null)
 	--neopasswd [passwd]         Neo4j password. (default: null)
 	--stream                     Stream insertion to Neo4j. Disable transaction logic, that is.
+	--shell [shell]              Shell for interpolated execution. (default: /bin/sh)
 	-h, --help                   output usage information
 ```
 

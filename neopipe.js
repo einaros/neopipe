@@ -38,6 +38,7 @@ program
   .option('-i, --pipe-interpolated', 'Pipe interpolated input to output.')
   .option('-t, --testonly', 'Simulate insertion.')
   .option('-v, --verbose', 'Increase verbosity.', (v, total) => total + 1, 0)
+  .option('-e, --end-query [query]', 'Raw CYPHER query to run after the sequence has finished.', '')
   .option('--neohost [host]', 'Neo4j hostname.', 'localhost')
   .option('--neouser [user]', 'Neo4j username.', null)
   .option('--neopasswd [passwd]', 'Neo4j password.', null)
@@ -82,7 +83,7 @@ function unescScript(s) {
 }
 
 function trimLines(s) {
-  return s.split('\n').map(l => l.trim()).join('\n');
+  return s.split('\n').map(l => l.trim()).filter(l => l.length > 0).join('\n');
 }
 
 function indentLines(s, n) {
@@ -198,7 +199,7 @@ function processInstruction(session, instructionLine) {
       MERGE (a:\`${leftName}\` ${leftMergeProperties}) ${leftSetProperties}
       RETURN a
     `;
-    if (program.verbose > 1) console.error(indentLines(trimLines(cypher), 2));
+    if (program.verbose > 1) console.error(indentLines(trimLines(cypher), 2).green);
     if (!program.testonly) return session.run(cypher);
   }
   return null;
@@ -299,7 +300,6 @@ async function processStdinLine(line) {
   return lineInstruction;
 }
 
-
 function processPendingInserts(pendingNeoPromises) {
   let exitCode = 0;
   Promise.all(pendingNeoPromises)
@@ -308,6 +308,12 @@ function processPendingInserts(pendingNeoPromises) {
       // Detect errors
       for (let result of results) {
         if (result.error || result.message) throw result; 
+      }
+      if (program.endQuery) {
+        let cypherTarget = program.stream ? session : tx;
+        if (program.verbose > 0) console.error(`* Executing end query.`.cyan);
+        if (program.verbose > 1) console.error(indentLines(trimLines(program.endQuery), 2).green);
+        if (!program.testonly) cypherTarget.run(program.endQuery);
       }
       // Presumably no errors, try commiting
       return tx.commit()
