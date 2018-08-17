@@ -128,6 +128,23 @@ Add an entity 'a', but try to interpolate id from a missing field, fall back to 
 $ echo 'foo bar "b-az,bax"' | neopipe 'a:"{4?{!uptime}}"'
 ```
 
+Add entities for all images in a hierarchy, calculating perceptual hashes for each one, storing
+bitwise pHash as an entity property, finally run raw Cypher query to find images with low
+Hamming distance, based on the hashes, and create relationships between them:
+
+```
+find *.jpg | neopipe -v 'Image:"{}" (phash:{!imagehash -b "{}"})' -e '
+MATCH (a:Image)
+MATCH (b:Image)
+WITH a, b, apoc.text.hammingDistance(a.phash, b.phash) AS c
+WHERE a.id <> b.id AND c <= 10
+MERGE (a)-[r:LOOKS_LIKE]-(b)
+SET r.distance = c
+RETURN a, b, r'
+```
+Re: above example, see also https://vimeo.com/285498808/8e5eb49ffd and find the simple imagehash tool at 
+https://gist.github.com/einaros/a9f4d0d5f0f7f69cb70b0f005fc9ae29.
+
 ## License ##
 
 ISC
