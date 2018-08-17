@@ -42,6 +42,7 @@ program
   .option('--neouser [user]', 'Neo4j username.', null)
   .option('--neopasswd [passwd]', 'Neo4j password.', null)
   .option('--stream', 'Stream insertion to Neo4j. Disable transaction logic, that is.')
+  .option('--shell [shell]', 'Shell for interpolated execution.', '/bin/sh')
   .on('--help', function(){ console.log(require('./help.js')); })
   .parse(process.argv);
 
@@ -272,7 +273,7 @@ async function processStdinLine(line) {
         return '\\' + original.slice(index)
       }
       if (program.verbose > 2) console.error('Inline script:', shellScript);
-      const { stdout, stderr } = await exec(shellScript); 
+      const { stdout, stderr } = await exec(shellScript, {shell: program.shell}); 
       if (program.verbose > 2) {
         console.error('Stdout:', stdout.toString().trim());
         console.error('Stderr:', stderr.toString().trim());
