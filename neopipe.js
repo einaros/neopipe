@@ -228,10 +228,16 @@ async function processStdinLine(line) {
       }
       if (program.verbose > 2) console.error('Interpolate:', expression);
       const interpolateParser = new nearley.Parser(compiledSubgrammar);
-      interpolateParser.feed(expression);
-      let res = interpolateParser.results[0];
-      if (!res) {
-        throw new Error(`Substitution expression parsing failed: ${expression}`);
+      let res;
+      if (end == start) {
+        res = {optional: '', hashed: false, upcase: false, field: { start: 1, end: -1 }};
+      }
+      else {
+        interpolateParser.feed(expression);
+        res = interpolateParser.results[0];
+        if (!res) {
+          throw new Error(`Substitution expression parsing failed: ${expression}`);
+        }
       }
       if (program.verbose > 2) console.error('Interpolate result:', JSON.stringify(res));
       let value = line.slice(res.field.start-1, res.field.end == -1 ? line.length : res.field.end).join(program.separator);
