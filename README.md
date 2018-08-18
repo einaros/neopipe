@@ -137,7 +137,7 @@ find *.jpg | neopipe -v 'Image:"{}" (phash:{!imagehash -b "{}"})' -e '
 MATCH (a:Image)
 MATCH (b:Image)
 WITH a, b, apoc.text.hammingDistance(a.phash, b.phash) AS c
-WHERE a.id <> b.id AND c <= 10
+WHERE id(a) < id(b) AND c <= 10
 MERGE (a)-[r:LOOKS_LIKE]-(b)
 SET r.distance = c
 RETURN a, b, r'

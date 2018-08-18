@@ -39,6 +39,7 @@ program
   .option('-t, --testonly', 'Simulate insertion.')
   .option('-v, --verbose', 'Increase verbosity.', (v, total) => total + 1, 0)
   .option('-e, --end-query [query]', 'Raw CYPHER query to run after the sequence has finished.', '')
+  .option('-r, --show-results', 'Write query results to stdout (as JSON).')
   .option('--neohost [host]', 'Neo4j hostname.', 'localhost')
   .option('--neouser [user]', 'Neo4j username.', null)
   .option('--neopasswd [passwd]', 'Neo4j password.', null)
@@ -48,10 +49,10 @@ program
   .parse(process.argv);
 
 const instructionTemplate = program.args.join(' ').trim();
-if (instructionTemplate == '') {
-  program.help();
-  process.exit(1);
-}
+//if (instructionTemplate == '') {
+  //program.help();
+  //process.exit(1);
+//}
 
 if (program.testonly) console.error('* Simulation starting - will not commit to Neo4j'.cyan);
 const [driver, session, tx] = establishConnection();
@@ -310,24 +311,38 @@ function processPendingInserts(pendingNeoPromises) {
   let exitCode = 0;
   Promise.all(pendingNeoPromises)
     .then((results) => {
-      results = results.filter(r => r);
+      results = results.filter(r => r); // ignore empty results
       // Detect errors
       for (let result of results) {
         if (result.error || result.message) throw result; 
       }
-      if (program.endQuery) {
-        let cypherTarget = program.stream ? session : tx;
-        if (program.verbose > 0) console.error(`* Executing end query.`.cyan);
-        if (program.verbose > 1) console.error(indentLines(trimLines(program.endQuery), 2).green);
-        if (!program.testonly) cypherTarget.run(program.endQuery);
-      }
       // Presumably no errors, try commiting
       return tx.commit()
         .then(() => {
+          // todo: 
+          // when insertion results are supposed to be showed, show them
+          // as they are available in the case of streamed execution
+          // or as the transaction result otherwise
           const timeDiff = process.hrtime(timeStarted);
           const timeElapsed = (timeDiff[0] * NS_PER_SEC + timeDiff[1]) / NS_PER_SEC;
           if (program.testonly) console.error(`* ${results.length} expressions simulated (${timeElapsed.toFixed(2)} sec).`.cyan);
           else console.error(`* ${results.length} expressions inserted into Neo4j (${timeElapsed.toFixed(2)} sec).`.cyan);
+          return Promise.resolve();
+        })
+        .then(() => {
+          if (program.endQuery) {
+            if (program.verbose > 0) console.error(`* Executing end query.`.cyan);
+            if (program.verbose > 1) console.error(indentLines(trimLines(program.endQuery), 2).green);
+            if (!program.testonly) {
+              let result = session.run(program.endQuery);
+              if (program.showResults) {
+                return result.then(r => {
+                  console.log(JSON.stringify(r.records));
+                });
+              }
+            }
+          }
+          return Promise.resolve();
         });
     })
     .catch((e) => {
@@ -342,6 +357,7 @@ function processPendingInserts(pendingNeoPromises) {
     });
 }
 
+let hasInstruction = instructionTemplate !== '';
 if (!process.stdin.isTTY) {
   // Process lines from stdin interpolated with an instruction from the command line
   let readline = require('readline');
@@ -354,6 +370,7 @@ if (!process.stdin.isTTY) {
   const limit = promiseLimit(program.jobs);
   let pendingNeoPromises = [];
   rl.on('line', async (line) => {
+    if (!hasInstruction) return;
     pendingNeoPromises.push(
       limit(() => processStdinLine(line))
         .then(v => processInstruction(program.stream ? session : tx, v))
@@ -364,6 +381,7 @@ if (!process.stdin.isTTY) {
 }
 else {
   // Process single instruction from the command line
-  processPendingInserts([Promise.resolve().then(() => processInstruction(tx, instructionTemplate))]);
+  if (hasInstruction) processPendingInserts([Promise.resolve().then(() => processInstruction(tx, instructionTemplate))]);
+  else processPendingInserts([]);
 }
 
