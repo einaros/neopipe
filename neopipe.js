@@ -49,10 +49,6 @@ program
   .parse(process.argv);
 
 const instructionTemplate = program.args.join(' ').trim();
-//if (instructionTemplate == '') {
-  //program.help();
-  //process.exit(1);
-//}
 
 if (program.testonly) console.error('* Simulation starting - will not commit to Neo4j'.cyan);
 const [driver, session, tx] = establishConnection();
