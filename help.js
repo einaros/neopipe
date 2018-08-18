@@ -29,7 +29,7 @@ module.exports = `
 
       Add the same things as above, and pass all stdin along to the next piped command:
 
-        $ echo foo bar baz | neopipe -p 'Thing:{1} is_not_a Thing:{3}' | something_else.sh
+        $ echo foo bar baz | neopipe -o pipe 'Thing:{1} is_not_a Thing:{3}' | something_else.sh
 
       Find files in a folder hierarchy, add FILE entities with the filenames as id,
       set a property 'size' on the FILE with the result of a shell executed command (stat) with
@@ -58,4 +58,21 @@ module.exports = `
       Add an entity 'a', but try to interpolate id from a missing field, fall back to the result of 'uptime':
 
         $ echo 'foo bar "b-az,bax"' | neopipe 'a:"{4?{!uptime}}"'
+
+      In a contrived example, stream insertion of new entities every two seconds, and write each result from
+      Neo4j as JSON to standard output: 
+
+        $ while true; do date; sleep 2; done | neopipe --stream -o json 'Uuid:{!uuid} generated_at Time:"{1-}"'
+    
+    Executing raw Cypher queries:
+    ============================================
+    
+      Detach and delete all entities:
+
+        $ neopipe -e 'MATCH (n) DETACH DELETE (n)'
+
+      Use the JSON output mode, no input expression and an end query to extract existing entity relationships 
+      (based on advanced example in README) and parse the output with jq (https://stedolan.github.io/jq/):
+
+        $ neopipe -o json -e 'MATCH p=()-[r:LOOKS_LIKE]->() RETURN p' | jq .
 `;

@@ -8,6 +8,8 @@ A simple(ish) tool to pipe stuff into Neo4j.
 
 ## Usage ##
 
+__Note:__ This file (and --help) will be the only updated sources on how to use Neopipe. Any example video can and will be outdated.
+
 First you need Neo4j running locally with no password. Yes, that should be fixed in the future. Yes, it should be configurable from the command line.
 
 For now, if you don't have Neo4j, getting the required stuff up and running with Docker will look something like:
@@ -36,19 +38,24 @@ Options:
 
 	-V, --version                output the version number
 	-b, --keep-blank             Keep expressions with blank ids.
-	-s, --separator [separator]  Custom field separator for stdin interpolation. (default:  )
-	-q, --quote [quote]          Custom quote char for stdin interpolation. (default: ")
-	-p, --pipe                   Pipe input to output.
-	-j, --jobs [jobs]            Limit number of concurrent jobs. (default: 8)
-	-i, --pipe-interpolated      Pipe interpolated input to output.
+	-s, --separator <separator>  Custom field separator for stdin interpolation. (default:  )
+	-q, --quote <quote>          Custom quote char for stdin interpolation. (default: ")
+	-j, --jobs <jobs>            Limit number of concurrent jobs. (default: 8)
+	-o, --output <output type>   Output type:
+		| none: No output
+		| pipe: Pipe input to output
+		| interpolated: Print completed expressions
+		| json: Return JSON output from Neo4j inserts
+		| (default: No output)
 	-t, --testonly               Simulate insertion.
 	-v, --verbose                Increase verbosity.
-	-e, --end-query [query]      Raw CYPHER query to run after the sequence has finished. (default: )
-	--neohost [host]             Neo4j hostname. (default: localhost)
-	--neouser [user]             Neo4j username. (default: null)
-	--neopasswd [passwd]         Neo4j password. (default: null)
+	-e, --end-query <query>      Raw CYPHER query to run after the sequence has finished. (default: )
+	-r, --show-results           Write query results to stdout (as JSON).
+	--neohost <host>             Neo4j hostname. (default: localhost)
+	--neouser <user>             Neo4j username. (default: null)
+	--neopasswd <passwd>         Neo4j password. (default: null)
 	--stream                     Stream insertion to Neo4j. Disable transaction logic, that is.
-	--shell [shell]              Shell for interpolated execution. (default: /bin/sh)
+	--shell <shell>              Shell for interpolated execution. (default: /bin/sh)
 	-h, --help                   output usage information
 ```
 
@@ -85,7 +92,7 @@ $ echo foo bar baz | neopipe 'Thing:{1} is_not_a Thing:{3}'
 Add the same things as above, and pass all stdin along to the next piped command:
 
 ```
-$ echo foo bar baz | neopipe -p 'Thing:{1} is_not_a Thing:{3}' | something_else.sh
+$ echo foo bar baz | neopipe -o pipe 'Thing:{1} is_not_a Thing:{3}' | something_else.sh
 ```
 
 Find files in a folder hierarchy, add FILE entities with the filenames as id,
@@ -128,12 +135,28 @@ Add an entity 'a', but try to interpolate id from a missing field, fall back to 
 $ echo 'foo bar "b-az,bax"' | neopipe 'a:"{4?{!uptime}}"'
 ```
 
+### Executing raw Cypher queries:
+
+Detach and delete all entities:
+
+```
+$ neopipe -e 'MATCH (n) DETACH DELETE (n)'
+```
+
+Use the JSON output mode, no input expression and an end query to extract existing entity relationships (based on the hamming distance example below) and parse the output with jq (https://stedolan.github.io/jq/):
+
+```
+$ neopipe -o json -e 'MATCH p=()-[r:LOOKS_LIKE]->() RETURN p' | jq .
+```
+
+### Other / advanced examples:
+
 Add entities for all images in a hierarchy, calculating perceptual hashes for each one, storing
 bitwise pHash as an entity property, finally run raw Cypher query to find images with low
 Hamming distance, based on the hashes, and create relationships between them:
 
 ```
-find *.jpg | neopipe -v 'Image:"{}" (phash:{!imagehash -b "{}"})' -e '
+$ find *.jpg | neopipe -v 'Image:"{}" (phash:{!imagehash -b "{}"})' -r -e '
 MATCH (a:Image)
 MATCH (b:Image)
 WITH a, b, apoc.text.hammingDistance(a.phash, b.phash) AS c
