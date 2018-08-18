@@ -27,29 +27,42 @@ const exec = util.promisify(require('child_process').exec);
 const cpuCount = os.cpus().length;
 const timeStarted = process.hrtime();
 
+const outputType = {
+  none: 'No output',
+  pipe: 'Pipe input to output',
+  interpolated: 'Print completed expressions',
+  json: 'Return JSON output from Neo4j inserts', 
+};
+
 program
   .version(require('./package.json').version)
   .description(require('./package.json').description)
   .option('-b, --keep-blank', 'Keep expressions with blank ids.')
-  .option('-s, --separator [separator]', 'Custom field separator for stdin interpolation.', ' ')
-  .option('-q, --quote [quote]', 'Custom quote char for stdin interpolation.', '"')
-  .option('-p, --pipe', 'Pipe input to output.')
-  .option('-j, --jobs [jobs]', 'Limit number of concurrent jobs.', cpuCount)
-  .option('-i, --pipe-interpolated', 'Pipe interpolated input to output.')
+  .option('-s, --separator <separator>', 'Custom field separator for stdin interpolation.', ' ')
+  .option('-q, --quote <quote>', 'Custom quote char for stdin interpolation.', '"')
+  .option('-j, --jobs <jobs>', 'Limit number of concurrent jobs.', cpuCount)
+  .option('-o, --output <output type>', 
+    `Output type:\n\t| ${Object.keys(outputType).map(o => o + ': ' + outputType[o]).join('\n\t| ')}\n\t|`, 
+    new RegExp(`^(${Object.keys(outputType).join('|')})$`, 'i'), 
+    outputType.none)
   .option('-t, --testonly', 'Simulate insertion.')
   .option('-v, --verbose', 'Increase verbosity.', (v, total) => total + 1, 0)
-  .option('-e, --end-query [query]', 'Raw CYPHER query to run after the sequence has finished.', '')
+  .option('-e, --end-query <query>', 'Raw CYPHER query to run after the sequence has finished.', '')
   .option('-r, --show-results', 'Write query results to stdout (as JSON).')
-  .option('--neohost [host]', 'Neo4j hostname.', 'localhost')
-  .option('--neouser [user]', 'Neo4j username.', null)
-  .option('--neopasswd [passwd]', 'Neo4j password.', null)
+  .option('--neohost <host>', 'Neo4j hostname.', 'localhost')
+  .option('--neouser <user>', 'Neo4j username.', null)
+  .option('--neopasswd <passwd>', 'Neo4j password.', null)
   .option('--stream', 'Stream insertion to Neo4j. Disable transaction logic, that is.')
-  .option('--shell [shell]', 'Shell for interpolated execution.', '/bin/sh')
+  .option('--shell <shell>', 'Shell for interpolated execution.', '/bin/sh')
   .on('--help', function(){ console.log(require('./help.js')); })
   .parse(process.argv);
 
+for (let key in outputType) outputType[key] = key; // don't need the description, only the keys
 const instructionTemplate = program.args.join(' ').trim();
+const hasInstruction = instructionTemplate !== '';
+const useTransaction = !program.stream;
 
+if (program.verbose > 0) console.log(`* Input: ${!process.stdin.isTTY ? 'stdin' : 'command-line argument'}. Output: ${program.output}.`.cyan);
 if (program.testonly) console.error('* Simulation starting - will not commit to Neo4j'.cyan);
 const [driver, session, tx] = establishConnection();
 
@@ -61,7 +74,7 @@ function establishConnection() {
   }
   const driver = neo4j.driver(`bolt://${program.neohost}`, auth);
   const session = driver.session();
-  const tx = session.beginTransaction();
+  const tx = useTransaction ? session.beginTransaction() : null;
   return [driver, session, tx];
 }
 
@@ -107,11 +120,9 @@ function grabUntilEndBrace(s, start) {
   return [start+1, i];
 }
 
-function processInstruction(session, instructionLine) {
+function processInstruction(instructionLine) {
   if (instructionLine == null) return null;
-  if (program.verbose > 0) {
-    console.error(`! ${instructionLine}`.magenta);
-  }
+  if (program.verbose > 0) console.error(`! ${instructionLine}`.magenta);
   
   const parser = new nearley.Parser(compiledGrammar);
   parser.feed(escapeSlashes(instructionLine));
@@ -150,6 +161,7 @@ function processInstruction(session, instructionLine) {
     if (leftMergeProperties.length > 0) leftMergeProperties = `{ ${leftMergeProperties} }`;
   }
 
+  let promise = null;
   if (instruction.type == 'connect') {
     let rightName = escapeSlashes(instruction.right.name);
     let rightMergeOn = escapeSlashes(instruction.right.mergeOn || 'id');
@@ -186,10 +198,10 @@ function processInstruction(session, instructionLine) {
       MERGE (a:\`${leftName}\` ${leftMergeProperties}) ${leftSetProperties}
       MERGE (b:\`${rightName}\` ${rightMergeProperties}) ${rightSetProperties}
       CREATE UNIQUE (a)-[ab:\`${relationship}\`]-(b)
-      RETURN ab
+      RETURN a, b, ab
     `;
     if (program.verbose > 1) console.error(indentLines(trimLines(cypher), 2).green);
-    if (!program.testonly) return session.run(cypher);
+    if (!program.testonly) promise = (tx || session).run(cypher);
   }
   else if (instruction.type == 'insert') {
     let cypher = `
@@ -197,16 +209,19 @@ function processInstruction(session, instructionLine) {
       RETURN a
     `;
     if (program.verbose > 1) console.error(indentLines(trimLines(cypher), 2).green);
-    if (!program.testonly) return session.run(cypher);
+    if (!program.testonly) promise = (tx || session).run(cypher);
   }
-  return null;
+  if (program.stream && program.output == outputType.json) {
+    // streaming (no transaction) json output happens here
+    promise.then(r => { console.log(JSON.stringify(r.records)); });
+  }
+  return promise;
 }
 
 async function processStdinLine(line) {
-  if (program.pipe && !program.pipeInterpolated) console.log(line);
-  if (program.verbose > 0) {
-    console.error(`> ${line}`.white);
-  }
+  if (program.output == outputType.pipe) console.log(line);
+  if (program.verbose > 0) console.error(`> ${line}`.white);
+  
   // parse input as csvish
   line = parse(line, { delimiter: program.separator, quote: program.quote })[0];
   let lineInstruction = instructionTemplate;
@@ -299,7 +314,7 @@ async function processStdinLine(line) {
   // remove chars added due to taint protection
   lineInstruction = lineInstruction.split('').filter((c, i) => taintArray[i] < 2).join('');
   // process the fully interpolated instruction
-  if (program.pipeInterpolated) console.log(lineInstruction);
+  if (program.output == outputType.interpolated) console.log(lineInstruction);
   return lineInstruction;
 }
 
@@ -313,12 +328,8 @@ function processPendingInserts(pendingNeoPromises) {
         if (result.error || result.message) throw result; 
       }
       // Presumably no errors, try commiting
-      return tx.commit()
+      return (tx ? tx.commit() : Promise.resolve())
         .then(() => {
-          // todo: 
-          // when insertion results are supposed to be showed, show them
-          // as they are available in the case of streamed execution
-          // or as the transaction result otherwise
           const timeDiff = process.hrtime(timeStarted);
           const timeElapsed = (timeDiff[0] * NS_PER_SEC + timeDiff[1]) / NS_PER_SEC;
           if (program.testonly) console.error(`* ${results.length} expressions simulated (${timeElapsed.toFixed(2)} sec).`.cyan);
@@ -326,16 +337,19 @@ function processPendingInserts(pendingNeoPromises) {
           return Promise.resolve();
         })
         .then(() => {
+          if (!program.stream && program.output == outputType.json) {
+            // non-streaming (transaction-based) json output happens here
+            for (let r of results) {
+              console.log(JSON.stringify(r.records));
+            }
+          }
           if (program.endQuery) {
             if (program.verbose > 0) console.error(`* Executing end query.`.cyan);
             if (program.verbose > 1) console.error(indentLines(trimLines(program.endQuery), 2).green);
             if (!program.testonly) {
-              let result = session.run(program.endQuery);
-              if (program.showResults) {
-                return result.then(r => {
-                  console.log(JSON.stringify(r.records));
-                });
-              }
+              return session.run(program.endQuery).then(r => {
+                if (program.showResults || program.output == outputType.json) console.log(JSON.stringify(r.records));
+              });
             }
           }
           return Promise.resolve();
@@ -353,7 +367,6 @@ function processPendingInserts(pendingNeoPromises) {
     });
 }
 
-let hasInstruction = instructionTemplate !== '';
 if (!process.stdin.isTTY) {
   // Process lines from stdin interpolated with an instruction from the command line
   let readline = require('readline');
@@ -362,14 +375,14 @@ if (!process.stdin.isTTY) {
     output: process.stdout,
     terminal: false
   });
-  if (program.verbose > 0) console.error(`* Collecting input from stdin.`.cyan);
+  if (program.verbose > 0) console.error(`* Collecting input from stdin. ${program.stream ? 'Not using' : 'Using'} transaction.`.cyan);
   const limit = promiseLimit(program.jobs);
   let pendingNeoPromises = [];
   rl.on('line', async (line) => {
     if (!hasInstruction) return;
     pendingNeoPromises.push(
       limit(() => processStdinLine(line))
-        .then(v => processInstruction(program.stream ? session : tx, v))
+        .then(v => processInstruction(v))
         .catch(e => e)
     );
   });
@@ -377,7 +390,7 @@ if (!process.stdin.isTTY) {
 }
 else {
   // Process single instruction from the command line
-  if (hasInstruction) processPendingInserts([Promise.resolve().then(() => processInstruction(tx, instructionTemplate))]);
+  if (hasInstruction) processPendingInserts([Promise.resolve().then(() => processInstruction(instructionTemplate))]);
   else processPendingInserts([]);
 }
 
