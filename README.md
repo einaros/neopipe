@@ -60,7 +60,7 @@ Options:
 	-t, --testonly               Simulate insertion.
 	-v, --verbose                Increase verbosity.
 	-e, --end-query <query>      Raw CYPHER query to run after the sequence has finished. (default: )
-	-r, --show-results           Write query results to stdout (as JSON).
+	-r, --show-results           Write end query results to stdout (as JSON).
 	--neohost <host>             Neo4j hostname. (default: localhost)
 	--neouser <user>             Neo4j username. (default: null)
 	--neopasswd <passwd>         Neo4j password. (default: null)

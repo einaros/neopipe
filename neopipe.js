@@ -48,7 +48,7 @@ program
   .option('-t, --testonly', 'Simulate insertion.')
   .option('-v, --verbose', 'Increase verbosity.', (v, total) => total + 1, 0)
   .option('-e, --end-query <query>', 'Raw CYPHER query to run after the sequence has finished.', '')
-  .option('-r, --show-results', 'Write query results to stdout (as JSON).')
+  .option('-r, --show-results', 'Write end query results to stdout (as JSON).')
   .option('--neohost <host>', 'Neo4j hostname.', 'localhost')
   .option('--neouser <user>', 'Neo4j username.', null)
   .option('--neopasswd <passwd>', 'Neo4j password.', null)
