@@ -11,10 +11,10 @@ A simple(ish) tool to pipe stuff into Neo4j.
 #### 0.1.7
 
 - Started changelog.
-- Removed `-p` and `-i` arguments to piping and interpolated output. Replaced with -o option.
+- Removed `-p` and `-i` arguments to piping and interpolated output. Replaced with `-o` option.
 - Added -o option to output JSON from both raw Cypher queries and from individual inserts.
-- Streamed inserts (--stream) will yield write JSON to stdout on the fly. Can be piped to jq or whatever.
-- The end query mode can now be used to make rar cypher queries, if the main expression is skipped. See examples in --help / README.
+- Streamed inserts (`--stream`) will yield write JSON to stdout on the fly. Can be piped to jq (https://stedolan.github.io/jq/) or whatever.
+- The end query mode can now be used to make rar cypher queries, if the main expression is skipped. See examples in `--help` / README.
 
 ## Usage ##
 
