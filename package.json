@@ -1,6 +1,6 @@
 {
   "name": "neopipe",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Pipe stuff to Neo4j",
   "main": "neopipe.js",
   "bin": {
