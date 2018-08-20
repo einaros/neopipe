@@ -348,7 +348,9 @@ function processPendingInserts(pendingNeoPromises) {
             if (program.verbose > 1) console.error(indentLines(trimLines(program.endQuery), 2).green);
             if (!program.testonly) {
               return session.run(program.endQuery).then(r => {
-                if (program.showResults || program.output == outputType.json) console.log(JSON.stringify(r.records));
+                if (program.showResults || program.output == outputType.json) {
+                  console.log(JSON.stringify(r.records));
+                }
               });
             }
           }
@@ -363,7 +365,7 @@ function processPendingInserts(pendingNeoPromises) {
     .finally(() => {
       session.close();
       driver.close();
-      process.exit(exitCode);
+      if (exitCode != 0) process.exit(exitCode);
     });
 }
 
