@@ -37,7 +37,6 @@ const outputType = {
 program
   .version(require('./package.json').version)
   .description(require('./package.json').description)
-  .option('-b, --keep-blank', 'Keep expressions with blank ids.')
   .option('-s, --separator <separator>', 'Custom field separator for stdin interpolation.', ' ')
   .option('-q, --quote <quote>', 'Custom quote char for stdin interpolation.', '"')
   .option('-j, --jobs <jobs>', 'Limit number of concurrent jobs.', cpuCount)
@@ -62,7 +61,7 @@ const instructionTemplate = program.args.join(' ').trim();
 const hasInstruction = instructionTemplate !== '';
 const useTransaction = !program.stream;
 
-if (program.verbose > 0) console.log(`* Input: ${!process.stdin.isTTY ? 'stdin' : 'command-line argument'}. Output: ${program.output}.`.cyan);
+if (program.verbose > 0) console.error(`* Input: ${!process.stdin.isTTY ? 'stdin' : 'command-line argument'}. Output: ${program.output}.`.cyan);
 if (program.testonly) console.error('* Simulation starting - will not commit to Neo4j'.cyan);
 const [driver, session, tx] = establishConnection();
 
@@ -120,6 +119,55 @@ function grabUntilEndBrace(s, start) {
   return [start+1, i];
 }
 
+function parseEntity(prefix, entity, preferSetProps, keepBlank) {
+  let entityName = escapeSlashes(entity.name);
+  let entityMergeOn = escapeSlashes(entity.mergeOn || 'id');
+  let entityId = escapeSlashes(entity.id || null);
+  let entityMergeProperties = [];
+  let entitySetProperties = '';
+
+  if (!entityId && !keepBlank) {
+    return [null, null, null];
+  }
+  else if (entityId || preferSetProps) {
+    // We've got an id, so bump all other properties to set props
+    entitySetProperties = []
+    if (entityId) entityMergeProperties = `{ \`${entityMergeOn}\`: "${entityId}" }`;
+    if (entity.properties) {
+      for (let tuple of Object.entries(entity.properties)) {
+        // todo: this is really rather hairy, and would ideally be fully handled by the grammar instead.
+        let [propertyName, [propertyOperator, propertyValue, propertyDefault]] = tuple;
+        propertyName = escapeSlashes(propertyName);
+        propertyOperator = propertyOperator.replace(/[^-\/+=*]/g, '');
+        if (/[-+\/*]=/.test(propertyOperator)) {
+          propertyValue = parseFloat(propertyValue);
+          entitySetProperties.unshift(`ON CREATE SET ${prefix}.\`${propertyName}\` = ${propertyDefault}`);
+          entitySetProperties.push(`SET ${prefix}.\`${propertyName}\` = ${prefix}.\`${propertyName}\` ${propertyOperator[0]} ${propertyValue}`);
+        }
+        else {
+          propertyValue = `"${escapeSlashes(propertyValue.toString())}"`;
+          entitySetProperties.push(`SET ${prefix}.\`${propertyName}\` ${propertyOperator} ${propertyValue}`);
+        }
+      }
+      entitySetProperties = '\n' + entitySetProperties.join('\n');
+    }
+  }
+  else if (entity.properties) {
+    // No id, handle the full property set as unique
+    for (let tuple of Object.entries(entity.properties)) {
+      let [propertyName, [propertyOperator, propertyValue]] = tuple;
+      propertyName = escapeSlashes(propertyName);
+      propertyOperator = propertyOperator.replace(/[^\-+=*]/g, '');
+      if (typeof propertyValue == 'string') propertyValue = escapeSlashes(propertyValue);
+      entityMergeProperties.push(`\`${propertyName}\`: "${propertyValue}"`);
+    }
+    entityMergeProperties = entityMergeProperties.join(',');
+    if (entityMergeProperties.length > 0) entityMergeProperties = `{ ${entityMergeProperties} }`;
+  }
+
+  return [entityName, entityMergeProperties, entitySetProperties];
+}
+
 function processInstruction(instructionLine) {
   if (instructionLine == null) return null;
   if (program.verbose > 0) console.error(`! ${instructionLine}`.magenta);
@@ -131,73 +179,24 @@ function processInstruction(instructionLine) {
     throw new Error(`Expression parsing failed: ${instructionLine}`);
   }
 
-  let leftName = escapeSlashes(instruction.left.name);
-  let leftMergeOn = escapeSlashes(instruction.left.mergeOn || 'id');
-  let leftId = escapeSlashes(instruction.left.id || null);
-  let leftMergeProperties = [];
-  let leftSetProperties = '';
-
-  if (!leftId && !program.keepBlank) {
+  let [leftName, leftMergeProperties, leftSetProperties] = parseEntity('a', instruction.left, false, false)
+  if (!leftName) {
     console.warn(`* Skipping expression with empty id: ${instructionLine}`.yellow);
     return null;
-  }
-  else if (leftId) {
-    // We've got an id, so bump all other properties to set props
-    leftSetProperties = []
-    leftMergeProperties = `{ \`${leftMergeOn}\`: "${leftId}" }`;
-    if (instruction.left.properties) {
-      for (let tuple of Object.entries(instruction.left.properties)) {
-        leftSetProperties.push(`SET a.\`${escapeSlashes(tuple[0])}\` = "${escapeSlashes(tuple[1])}"`);
-      }
-      leftSetProperties = '\n' + leftSetProperties.join('\n');
-    }
-  }
-  else if (instruction.left.properties) {
-    // No id, handle the full property set as unique
-    for (let tuple of Object.entries(instruction.left.properties)) {
-      leftMergeProperties.push(`\`${escapeSlashes(tuple[0])}\`: "${escapeSlashes(tuple[1])}"`);
-    }
-    leftMergeProperties = leftMergeProperties.join(',');
-    if (leftMergeProperties.length > 0) leftMergeProperties = `{ ${leftMergeProperties} }`;
   }
 
   let promise = null;
   if (instruction.type == 'connect') {
-    let rightName = escapeSlashes(instruction.right.name);
-    let rightMergeOn = escapeSlashes(instruction.right.mergeOn || 'id');
-    let rightId = escapeSlashes(instruction.right.id || null);
-    let rightMergeProperties = [];
-    let rightSetProperties = '';
-
-    if (!rightId && !program.keepBlank) {
+    let [rightName, rightMergeProperties, rightSetProperties] = parseEntity('b', instruction.right, false, false)
+    if (!rightName) {
       console.warn(`* Skipping expression with empty id: ${instructionLine}`.yellow);
       return null;
     }
-    else if (rightId) {
-      // We've got an id, so bump all other properties to set props
-      rightSetProperties = []
-      rightMergeProperties = `{ \`${rightMergeOn}\`: "${rightId}" }`;
-      if (instruction.right.properties) {
-        for (let tuple of Object.entries(instruction.right.properties)) {
-          rightSetProperties.push(`SET b.\`${escapeSlashes(tuple[0])}\` = "${escapeSlashes(tuple[1])}"`);
-        }
-        rightSetProperties = '\n' + rightSetProperties.join('\n');
-      }
-    }
-    else if (instruction.right.properties) {
-      // No id, handle the full property set as unique
-      for (let tuple of Object.entries(instruction.right.properties)) {
-        rightMergeProperties.push(`\`${escapeSlashes(tuple[0])}\`: "${escapeSlashes(tuple[1])}"`);
-      }
-      rightMergeProperties = rightMergeProperties.join(',');
-      if (rightMergeProperties.length > 0) rightMergeProperties = `{ ${rightMergeProperties} }`;
-    }
-
-    let relationship = instruction.relationship;
+    let [relName, relMergeProperties, relSetProperties] = parseEntity('ab', instruction.relationship, true, true)
     let cypher = `
       MERGE (a:\`${leftName}\` ${leftMergeProperties}) ${leftSetProperties}
       MERGE (b:\`${rightName}\` ${rightMergeProperties}) ${rightSetProperties}
-      CREATE UNIQUE (a)-[ab:\`${relationship}\`]-(b)
+      MERGE (a)-[ab:\`${relName}\` ${relMergeProperties}]-(b) ${relSetProperties}
       RETURN a, b, ab
     `;
     if (program.verbose > 1) console.error(indentLines(trimLines(cypher), 2).green);

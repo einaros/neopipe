@@ -8,6 +8,11 @@ A simple(ish) tool to pipe stuff into Neo4j.
 
 ## Changelog ##
 
+#### 0.1.8
+
+- Fixed race condition for large end output.
+- Started reworking grammar, among other things to support property operations with default values: `FOO:1 KNOWS (weight(0)+=0.2) BAR:2`
+
 #### 0.1.7
 
 - Started changelog.
@@ -47,7 +52,6 @@ Pipe stuff to Neo4j
 Options:
 
 	-V, --version                output the version number
-	-b, --keep-blank             Keep expressions with blank ids.
 	-s, --separator <separator>  Custom field separator for stdin interpolation. (default:  )
 	-q, --quote <quote>          Custom quote char for stdin interpolation. (default: ")
 	-j, --jobs <jobs>            Limit number of concurrent jobs. (default: 8)
