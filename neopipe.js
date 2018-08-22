@@ -52,8 +52,9 @@ program
   .option('--neouser <user>', 'Neo4j username.', null)
   .option('--neopasswd <passwd>', 'Neo4j password.', null)
   .option('--stream', 'Stream insertion to Neo4j. Disable transaction logic, that is.')
+  .option('--stream-flush <count>', '(if --stream) Flush stream buffer every N expressions. Useful for fast-running pipes that hog the queue. 0 to disable.', 0, parseInt)
   .option('--shell <shell>', 'Shell for interpolated execution.', '/bin/sh')
-  .on('--help', function(){ console.log(require('./help.js')); })
+  .on('--help', function(){ console.error(require('./help.js')); })
   .parse(process.argv);
 
 for (let key in outputType) outputType[key] = key; // don't need the description, only the keys
@@ -63,18 +64,25 @@ const useTransaction = !program.stream;
 
 if (program.verbose > 0) console.error(`* Input: ${!process.stdin.isTTY ? 'stdin' : 'command-line argument'}. Output: ${program.output}.`.cyan);
 if (program.testonly) console.error('* Simulation starting - will not commit to Neo4j'.cyan);
-const [driver, session, tx] = establishConnection();
 
 function establishConnection() {
-  if (program.verbose > 0) console.error(`* Connecting to Neo4j @ ${program.neohost}`.cyan);
-  let auth;
-  if (program.neouser) {
-    auth = neo4j.auth.basic(program.neouser, program.neopasswd);
-  }
-  const driver = neo4j.driver(`bolt://${program.neohost}`, auth);
-  const session = driver.session();
-  const tx = useTransaction ? session.beginTransaction() : null;
-  return [driver, session, tx];
+  if (program.testonly) return Promise.resolve([null, null, null]);
+  return new Promise((accept, reject) => {
+    if (program.verbose > 0) console.error(`* Connecting to Neo4j @ ${program.neohost}`.cyan);
+    let auth;
+    if (program.neouser) {
+      auth = neo4j.auth.basic(program.neouser, program.neopasswd);
+    }
+    const driver = neo4j.driver(`bolt://${program.neohost}`, auth);
+    const session = driver.session();
+    const tx = useTransaction ? session.beginTransaction() : null;
+    let interval = setInterval(() => {
+      if (session._open) {
+        clearInterval(interval);
+        accept([driver, session, tx]);
+      }
+    }, 100);
+  });
 }
 
 function unescapeSlashes(s) {
@@ -168,7 +176,7 @@ function parseEntity(prefix, entity, preferSetProps, keepBlank) {
   return [entityName, entityMergeProperties, entitySetProperties];
 }
 
-function processInstruction(instructionLine) {
+function processInstruction(session, instructionLine) {
   if (instructionLine == null) return null;
   if (program.verbose > 0) console.error(`! ${instructionLine}`.magenta);
   
@@ -200,7 +208,7 @@ function processInstruction(instructionLine) {
       RETURN a, b, ab
     `;
     if (program.verbose > 1) console.error(indentLines(trimLines(cypher), 2).green);
-    if (!program.testonly) promise = (tx || session).run(cypher);
+    if (!program.testonly) promise = session.run(cypher);
   }
   else if (instruction.type == 'insert') {
     let cypher = `
@@ -208,9 +216,9 @@ function processInstruction(instructionLine) {
       RETURN a
     `;
     if (program.verbose > 1) console.error(indentLines(trimLines(cypher), 2).green);
-    if (!program.testonly) promise = (tx || session).run(cypher);
+    if (!program.testonly) promise = session.run(cypher);
   }
-  if (program.stream && program.output == outputType.json) {
+  if (!useTransaction && program.output == outputType.json) {
     // streaming (no transaction) json output happens here
     promise.then(r => { console.log(JSON.stringify(r.records)); });
   }
@@ -269,7 +277,7 @@ async function processStdinLine(line) {
       return value + original.slice(end+1);
     });
     if (program.verbose > 3) {
-      console.log('Taint status:', lineInstruction.split('').map((c, i) => {
+      console.error('Taint status:', lineInstruction.split('').map((c, i) => {
         if (taintArray[i] == 0) return c.green;
         if (taintArray[i] == 1) return c.red;
         if (taintArray[i] == 2) return c.yellow;
@@ -302,7 +310,7 @@ async function processStdinLine(line) {
     });
     lineInstruction = lineInstruction.slice(0, offset) + substituted;
     if (program.verbose > 3) {
-      console.log('Taint status:', lineInstruction.split('').map((c, i) => {
+      console.error('Taint status:', lineInstruction.split('').map((c, i) => {
         if (taintArray[i] == 0) return c.green;
         if (taintArray[i] == 1) return c.red;
         if (taintArray[i] == 2) return c.yellow;
@@ -317,7 +325,7 @@ async function processStdinLine(line) {
   return lineInstruction;
 }
 
-function processPendingInserts(pendingNeoPromises) {
+function processPendingInserts(driver, session, tx, pendingNeoPromises, flushedCount) {
   let exitCode = 0;
   Promise.all(pendingNeoPromises)
     .then((results) => {
@@ -331,12 +339,12 @@ function processPendingInserts(pendingNeoPromises) {
         .then(() => {
           const timeDiff = process.hrtime(timeStarted);
           const timeElapsed = (timeDiff[0] * NS_PER_SEC + timeDiff[1]) / NS_PER_SEC;
-          if (program.testonly) console.error(`* ${results.length} expressions simulated (${timeElapsed.toFixed(2)} sec).`.cyan);
-          else console.error(`* ${results.length} expressions inserted into Neo4j (${timeElapsed.toFixed(2)} sec).`.cyan);
+          if (program.testonly) console.error(`* ${flushedCount + results.length} expressions simulated (${timeElapsed.toFixed(2)} sec).`.cyan);
+          else console.error(`* ${flushedCount + results.length} expressions inserted into Neo4j (${timeElapsed.toFixed(2)} sec).`.cyan);
           return Promise.resolve();
         })
         .then(() => {
-          if (!program.stream && program.output == outputType.json) {
+          if (useTransaction && program.output == outputType.json) {
             // non-streaming (transaction-based) json output happens here
             for (let r of results) {
               console.log(JSON.stringify(r.records));
@@ -357,8 +365,8 @@ function processPendingInserts(pendingNeoPromises) {
         });
     })
     .catch((e) => {
-      console.log(`* Error(s): ${e.stack || e.error}`.red)
-      console.log(`* In the case of dubious 'transaction' errors, check that the database is running and that connection details are correct.`.yellow)
+      console.error(`* Error(s): ${e.stack || e.error}`.red)
+      console.error(`* In the case of dubious 'transaction' errors, check that the database is running and that connection details are correct.`.yellow)
       exitCode = 1;
     })
     .finally(() => {
@@ -368,30 +376,61 @@ function processPendingInserts(pendingNeoPromises) {
     });
 }
 
-if (!process.stdin.isTTY) {
-  // Process lines from stdin interpolated with an instruction from the command line
-  let readline = require('readline');
-  let rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    terminal: false
-  });
-  if (program.verbose > 0) console.error(`* Collecting input from stdin. ${program.stream ? 'Not using' : 'Using'} transaction.`.cyan);
-  const limit = promiseLimit(program.jobs);
-  let pendingNeoPromises = [];
-  rl.on('line', async (line) => {
-    if (!hasInstruction) return;
-    pendingNeoPromises.push(
-      limit(() => processStdinLine(line))
-        .then(v => processInstruction(v))
-        .catch(e => e)
-    );
-  });
-  rl.on('close', () => processPendingInserts(pendingNeoPromises));
-}
-else {
-  // Process single instruction from the command line
-  if (hasInstruction) processPendingInserts([Promise.resolve().then(() => processInstruction(instructionTemplate))]);
-  else processPendingInserts([]);
-}
+establishConnection().then(([driver, session, tx]) => {
+  if (!process.stdin.isTTY) {
+    // Process lines from stdin interpolated with an instruction from the command line
+    let readline = require('readline');
+    let rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      terminal: false
+    });
+    if (program.verbose > 0) console.error(`* Collecting input from stdin. ${useTransaction ? 'Using' : 'Not using'} transaction.`.cyan);
+    const limit = promiseLimit(program.jobs);
+    let flushedCount = 0;
+    let pendingNeoPromises = [];
+    rl.on('line', async (line) => {
+      if (!hasInstruction) return;
 
+      // Process new input line
+      pendingNeoPromises.push(
+        limit(() => processStdinLine(line))
+          .then(v => processInstruction(tx || session, v))
+          .catch(e => e)
+      );
+
+      // Streams from fast-running pipes may have to be flushed. Do that here.
+      // todo: this code block is a near-duplicate of a block within processPendingInserts, which isn't very tidy
+      if (!useTransaction && program.streamFlush > 0 && pendingNeoPromises.length == program.streamFlush) {
+        rl.pause();  
+        Promise.all(pendingNeoPromises)
+          .then((results) => {
+            results = results.filter(r => r); // ignore empty results
+            // Detect errors
+            for (let result of results) {
+              if (result.error || result.message) throw result; 
+            }
+            flushedCount += pendingNeoPromises.length;
+            pendingNeoPromises = [];
+            rl.resume();
+          })
+          .catch((e) => {
+            console.error(`* Error(s): ${e.stack || e.error}`.red)
+            console.error(`* In the case of dubious 'transaction' errors, check that the database is running and that connection details are correct.`.yellow)
+            // unlike processPendingInsert, this pre-flush will usually not cause the session and driver to shutdown,
+            // but in the case of an error we can't do much else.
+            // an option would be to add an argument to make a note of - but not terminate after - streamed inserts
+            session.close();
+            driver.close();
+            process.exit(1);
+          });
+      }
+    });
+    rl.on('close', () => processPendingInserts(driver, session, tx, pendingNeoPromises, flushedCount));
+  }
+  else {
+    // Process single instruction from the command line
+    if (hasInstruction) processPendingInserts(driver, session, tx, [Promise.resolve().then(() => processInstruction(tx || session, instructionTemplate))], 0);
+    else processPendingInserts(driver, session, tx, [], 0);
+  }
+});

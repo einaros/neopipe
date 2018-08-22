@@ -8,6 +8,11 @@ A simple(ish) tool to pipe stuff into Neo4j.
 
 ## Changelog ##
 
+#### 0.1.9
+
+- Reworked streaming mode to resolve race conditions.
+- Added `--stream-flush N` argument, to force flushing of streamed queries every N expressions. This is required for fast-running input, such as file cat, which would otherwise hog the event loop.
+
 #### 0.1.8
 
 - Fixed race condition for large end output.
@@ -69,6 +74,7 @@ Options:
 	--neouser <user>             Neo4j username. (default: null)
 	--neopasswd <passwd>         Neo4j password. (default: null)
 	--stream                     Stream insertion to Neo4j. Disable transaction logic, that is.
+  --stream-flush <count>       (if --stream) Flush stream buffer every N expressions. Useful for fast-running pipes that hog the queue. 0 to disable. (default: 0)
 	--shell <shell>              Shell for interpolated execution. (default: /bin/sh)
 	-h, --help                   output usage information
 ```
