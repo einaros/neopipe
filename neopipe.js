@@ -12,7 +12,7 @@ const parse = require('csv-parse/lib/sync');
 const nearley = require('nearley');
 const grammar = require('./grammar.js');
 const subgrammar = require('./subgrammar.js');
-const neo4j = require('neo4j-driver').v1;
+const neo4j = require('neo4j-driver');
 const util = require('util');
 const stringReplaceAsync = require('string-replace-async');
 const promiseLimit = require('promise-limit');
@@ -365,7 +365,8 @@ function processPendingInserts(driver, session, tx, pendingNeoPromises, flushedC
         });
     })
     .catch((e) => {
-      console.error(`* Error(s): ${e.stack || e.error}`.red)
+      if (e.error) console.error(`* Error(s): ${e.error}`.red)
+      console.error(`* Stack trace: ${e.stack}`.red)
       console.error(`* In the case of dubious 'transaction' errors, check that the database is running and that connection details are correct.`.yellow)
       exitCode = 1;
     })
