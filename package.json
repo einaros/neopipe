@@ -15,9 +15,7 @@
     "neo4j-driver": "^4.0.2",
     "promise-limit": "^2.7.0",
     "sha1": "^1.1.1",
-    "string-replace-async": "^1.2.1"
-  },
-  "devDependencies": {
+    "string-replace-async": "^1.2.1",
     "moo": "latest",
     "nearley": "^2.15.1"
   }
